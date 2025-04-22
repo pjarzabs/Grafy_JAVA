@@ -56,11 +56,11 @@ public class GraphVisualizer extends JFrame {
 
 class Graph {
     int n;
-    java.util.List<Point> cellPositions;
+    List<Point> cellPositions;
     boolean[][] adj;
     int[] group;
 
-    public Graph(java.util.List<Point> positions) {
+    public Graph(List<Point> positions) {
         this.n = positions.size();
         this.cellPositions = positions;
         this.adj = new boolean[n][n];
@@ -80,12 +80,13 @@ class GraphLoader {
     public static Graph loadFromFile(File file) throws IOException {
         BufferedReader br = new BufferedReader(new FileReader(file));
         String line;
+        // 1) read spatial matrix header
         while ((line = br.readLine()) != null) {
             if (line.trim().startsWith("Macierz")) break;
         }
         if (line == null) throw new IllegalArgumentException("Matrix header not found");
-
-        java.util.List<boolean[]> mat = new ArrayList<>();
+        // read matrix rows
+        List<boolean[]> mat = new ArrayList<>();
         while ((line = br.readLine()) != null) {
             line = line.trim();
             if (!line.startsWith("[")) break;
@@ -93,7 +94,7 @@ class GraphLoader {
             String[] tokens = content.split("\\s+");
             boolean[] row = new boolean[tokens.length];
             for (int i = 0; i < tokens.length; i++) {
-                String tok = tokens[i].replaceAll("[^0-9]", "");
+                String tok = tokens[i].replace(".", "").trim();
                 if (!tok.equals("0") && !tok.equals("1"))
                     throw new IllegalArgumentException("Invalid token: " + tokens[i]);
                 row[i] = tok.equals("1");
@@ -101,7 +102,8 @@ class GraphLoader {
             mat.add(row);
         }
         int size = mat.size();
-        java.util.List<Point> positions = new ArrayList<>();
+        // build cellPositions: for each matrix true cell, assign a vertex ID in row-major
+        List<Point> positions = new ArrayList<>();
         int[][] vidMap = new int[size][size];
         for (int r = 0; r < size; r++) {
             for (int c = 0; c < size; c++) {
@@ -114,12 +116,12 @@ class GraphLoader {
             }
         }
         Graph graph = new Graph(positions);
-
+        // 2) read connection list header
         while (line != null && !line.trim().startsWith("Lista polaczen")) {
             line = br.readLine();
         }
         if (line == null) throw new IllegalArgumentException("Connection list header not found");
-
+        // read edges
         while ((line = br.readLine()) != null) {
             line = line.trim();
             if (!line.contains("-")) break;
@@ -128,22 +130,28 @@ class GraphLoader {
             int v2 = Integer.parseInt(parts[1].trim());
             graph.adj[v1][v2] = graph.adj[v2][v1] = true;
         }
-
-        while (line != null && !line.trim().startsWith("Grupa")) {
+        // 3) attempt to read groups; if not present, skip grouping
+        boolean hasGroups = false;
+        while (line != null) {
+            if (line.trim().startsWith("Grupa")) { hasGroups = true; break; }
             line = br.readLine();
         }
-        if (line == null) throw new IllegalArgumentException("Groups section not found");
-        for (int g = 0; g < 3; g++) {
-            if (!line.trim().startsWith("Grupa " + g + ":"))
-                throw new IllegalArgumentException("Expected Grupa " + g);
-            String[] parts = line.split(":", 2);
-            String[] items = parts[1].trim().split("\\s+,?\\s*");
-            for (String item : items) {
-                if (item.isEmpty()) continue;
-                int vid = Integer.parseInt(item.replaceAll("[^0-9]", ""));
-                graph.group[vid] = g;
+        if (hasGroups) {
+            for (int g = 0; g < 3; g++) {
+                if (line == null || !line.trim().startsWith("Grupa " + g + ":"))
+                    throw new IllegalArgumentException("Expected Grupa " + g + " but not found");
+                String[] parts = line.split(":", 2);
+                String[] items = parts[1].trim().split("\\s+");
+                for (String item : items) {
+                    String tok = item.replaceAll("[^0-9]", "");
+                    if (tok.isEmpty()) continue;
+                    int vid = Integer.parseInt(tok);
+                    if (vid < 0 || vid >= graph.n)
+                        throw new IllegalArgumentException("Vertex id out of range: " + vid);
+                    graph.group[vid] = g;
+                }
+                line = br.readLine();
             }
-            line = br.readLine();
         }
         br.close();
         return graph;
@@ -154,7 +162,6 @@ class GraphPanel extends JPanel {
     private Graph graph;
     private Point[] positions;
     private final Color[] colors = {Color.RED, Color.GREEN.darker(), Color.BLUE};
-
     GraphPanel() {
         addComponentListener(new ComponentAdapter() {
             public void componentResized(ComponentEvent e) {
@@ -163,12 +170,10 @@ class GraphPanel extends JPanel {
             }
         });
     }
-
     void setGraph(Graph graph) {
         this.graph = graph;
         computePositions();
     }
-
     private void computePositions() {
         if (graph == null) return;
         int w = getWidth(), h = getHeight();
@@ -179,34 +184,28 @@ class GraphPanel extends JPanel {
             maxR = Math.max(maxR, p.y);
         }
         int cols = maxC + 1, rows = maxR + 1;
-        int cellW = w / (cols + 1);
-        int cellH = h / (rows + 1);
+        int cellW = w / (cols + 1), cellH = h / (rows + 1);
         for (int i = 0; i < graph.n; i++) {
             Point grid = graph.cellPositions.get(i);
-            int x = cellW * (grid.x + 1);
-            int y = cellH * (grid.y + 1);
-            positions[i] = new Point(x, y);
+            positions[i] = new Point(cellW * (grid.x + 1), cellH * (grid.y + 1));
         }
     }
-
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         if (graph == null) return;
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setStroke(new BasicStroke(1.5f));
-        g2.setFont(new Font("Arial", Font.PLAIN, 12));
-
+        // draw edges
+        g2.setColor(Color.LIGHT_GRAY);
         for (int i = 0; i < graph.n; i++) {
             for (int j = i + 1; j < graph.n; j++) {
                 if (graph.adj[i][j]) {
                     Point p1 = positions[i], p2 = positions[j];
-                    g2.setColor(Color.LIGHT_GRAY);
                     g2.drawLine(p1.x, p1.y, p2.x, p2.y);
                 }
             }
         }
-
+        // draw nodes with group colors
         int size = 20;
         for (int i = 0; i < graph.n; i++) {
             Point p = positions[i];
@@ -215,6 +214,7 @@ class GraphPanel extends JPanel {
             g2.fillOval(p.x - size/2, p.y - size/2, size, size);
             g2.setColor(Color.BLACK);
             g2.drawOval(p.x - size/2, p.y - size/2, size, size);
+            // label
             String lbl = String.valueOf(i);
             FontMetrics fm = g2.getFontMetrics();
             int lx = p.x - fm.stringWidth(lbl)/2;
